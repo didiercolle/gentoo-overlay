@@ -3,7 +3,7 @@ EAPI=8
 inherit go-module systemd
 
 DESCRIPTION="Get up and running with large language models locally"
-HOMEPAGE="https://ollama.com https://github.com"
+HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
 
 SRC_URI="https://github.com{PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz
 	https://localhost/${P}-go-proxy.tar.xz"
@@ -49,39 +49,35 @@ src_compile() {
 	export GOPROXY="file://${WORKDIR}/go-proxy"
 	export GOSUMDB=off
 
-	go generate ./... || die "go generate failed to build llama.cpp backends"
+	# STEP 1: Manually trigger the native C++ CMake generation layer for the server runner.
+	# This ensures the llama-server binary is output as a plain file we can interact with.
+	cmake -S llama/server -B build-llama-server -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DGGML_AVX2=ON \
+		-DGGML_FMA=ON \
+		|| die "CMake configuration for llama-server failed"
+		
+	cmake --build build-llama-server || die "Building llama-server failed"
+
+	# STEP 2: Execute the standard Go compilation phase for the client CLI
+	go generate ./... || die "go generate failed"
 	ego build -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
 src_install() {
-	# 1. Install the primary client wrapper binary
+	# 1. Install primary binary wrapper
 	dobin bin/ollama
 
-	# 2. HARDENED INSTALLATION MATCHING THE CPU PRESET TARGETS:
-	# Ollama's build system creates specific preset sub-folders inside 'build/'
+	# 2. FIXED INSTALLATION: Explicitly install our raw C++ server binary 
+	# straight into the main path Ollama searches at runtime.
 	exeinto /usr/lib/ollama
-	
-	if [[ -f "build/llama-server-cpu/bin/llama-server" ]]; then
-		doexe "build/llama-server-cpu/bin/llama-server"
-	elif [[ -f "build/llama-server-cpu/llama-server" ]]; then
-		doexe "build/llama-server-cpu/llama-server"
-	elif [[ -d "lib/ollama" && -f "lib/ollama/llama-server" ]]; then
-		doexe lib/ollama/*
-	else
-		# Absolute fallback: unconstrained recursive search for matching targets
-		local fallback_bin=$(find "${WORKDIR}" -name "llama-server" -type f -executable | head -n 1)
-		if [[ -n "${fallback_bin}" ]]; then
-			doexe "${fallback_bin}"
-		else
-			die "llama-server binary could not be found anywhere inside the work directory tree"
-		fi
-	fi
+	doexe build-llama-server/bin/llama-server
 
-	# 3. Setup persistent system model storage directory boundaries
+	# 3. Secure data directory layouts
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. Deploy OpenRC Daemon initialization profiles
+	# 4. OpenRC Daemon initialization files
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -97,7 +93,7 @@ src_install() {
 	EOF
 	newinitd "${T}/ollama.init" ollama
 
-	# 5. Deploy Systemd Unit Profiles
+	# 5. Systemd Unit Configurations
 	cat <<-'EOF' > "${T}/ollama.service"
 		[Unit]
 		Description=Ollama Service
