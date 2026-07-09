@@ -1,28 +1,25 @@
 EAPI=8
 
-# The go-module eclass handles standard dynamic downloading safely
 inherit go-module systemd
 
 DESCRIPTION="Get up and running with large language models locally"
 HOMEPAGE="https://ollama.com https://github.com"
 
-# Pure upstream source archive URL
-SRC_URI="https://github.com/${PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
+# Main source plus the local/GitHub hosted unpruned proxy asset archive
+SRC_URI="https://github.com{PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz
+	https://localhost/${P}-go-proxy.tar.xz"
 
 LICENSE="MIT"
 SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# Build tools required inside the build sandbox
 BDEPEND="
 	>=dev-lang/go-1.22
 	dev-build/cmake
 	dev-build/ninja
 	dev-util/tree-sitter-cli
 "
-
-# Bind against Gentoo's system tree-sitter libraries
 DEPEND="dev-libs/tree-sitter"
 RDEPEND="
 	${DEPEND}
@@ -33,27 +30,37 @@ RDEPEND="
 S="${WORKDIR}/${P}"
 
 src_unpack() {
-	# Standard source decompression
-	default
+	# Create a strict target folder for the local dependency mirror mapping
+	mkdir -p "${WORKDIR}/go-proxy" || die
+	
+	# Unpack the main app codebase
+	unpack "${P}.tar.gz"
+	
+	# Extract the unpruned Go zip streams natively inside the proxy silo
+	cd "${WORKDIR}/go-proxy" || die
+	unpack "${P}-go-proxy.tar.xz"
 }
 
 src_compile() {
 	export CGO_ENABLED=1
-	
-	# Instruct CGO to bind directly against standard include directories
 	export CGO_CFLAGS="${CFLAGS} -I/usr/include"
 	export CGO_LDFLAGS="${LDFLAGS} -ltree-sitter"
 
-	# GPU platform execution skips for Intel UHD hardware
+	# GPU platform hardware runtime skips for your Intel UHD configuration
 	export OLLAMA_SKIP_CUDA_GENERATE=1
 	export OLLAMA_SKIP_ROCM_GENERATE=1
 	export OLLAMA_SKIP_ONEAPI_GENERATE=1
 	export OLLAMA_CPU_TARGET="static"
 
-	# Let the Go toolchain dynamically generate targets inside Portage's network sandbox
+	# THE CORE OFFLINE SANDBOX FIX:
+	# Convert Go's target proxy pipeline to use your local filesystem layout
+	export GOPROXY="file://${WORKDIR}/go-proxy"
+	export GOSUMDB=off
+
+	# Run code generation (now pulls tree-sitter C files directly from the offline zip)
 	go generate ./... || die "go generate failed to build llama.cpp backends"
 	
-	# Regular compilation build sequence
+	# Compile final standalone binary
 	ego build -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
