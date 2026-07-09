@@ -3,7 +3,7 @@ EAPI=8
 inherit systemd
 
 DESCRIPTION="Get up and running with large language models locally (Binary Release)"
-HOMEPAGE="https://ollama.com https://github.com"
+HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
 
 # Target the official static binary release for AMD64 architectures
 SRC_URI="https://github.com/ollama/ollama/releases/download/v${PV}/ollama-linux-amd64.tar.zst -> ${P}-linux-amd64.tar.zst"
@@ -13,7 +13,7 @@ SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# We only need zstd at build time to unpack the archive
+# Required decompression dependency package
 BDEPEND="app-arch/zstd"
 RDEPEND="
 	acct-group/ollama
@@ -23,37 +23,39 @@ RDEPEND="
 S="${WORKDIR}"
 
 src_unpack() {
-	# Unpack the zstd-compressed tarball into ${WORKDIR}
+	# Extract the zstd compressed archive cleanly into the root of ${WORKDIR}
 	unpack "${P}-linux-amd64.tar.zst"
 }
 
 src_compile() {
-	# Pre-compiled binaries require no compilation phase
+	# Precompiled binary package; no compiler stages required
 	:
 }
 
 src_install() {
-	# 1. Install the main ollama client CLI binary
-	into /usr
+	# 1. FIXED EXECUTABLE DEPLOYMENT:
+	# Install the primary binary into /usr/bin/ using the explicit workspace sub-path
+	exeinto /usr/bin
 	if [[ -f "${S}/bin/ollama" ]]; then
-		dobin bin/ollama
+		doexe bin/ollama
 	else
-		die "Primary 'ollama' executable missing from expected 'bin/' path"
+		die "Primary 'ollama' client executable wrapper missing from extracted 'bin/' path"
 	fi
 
-	# 2. Install the backend engines (llama-server) into the runtime path
+	# 2. FIXED BACKEND ENGINE DEPLOYMENT:
+	# Copy the companion llama-server engines into /usr/lib/ollama/
 	exeinto /usr/lib/ollama
 	if [[ -d "${S}/lib/ollama" ]]; then
 		doexe lib/ollama/*
 	else
-		die "Backend library directory 'lib/ollama/' missing from payload"
+		die "Backend runtime inference engines missing from extracted 'lib/ollama/' path"
 	fi
 
-	# 3. Setup persistent system model storage boundaries
+	# 3. Setup the persistent system data boundary storage directory
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. Create OpenRC init files
+	# 4. Deploy clean OpenRC init profiles on the fly
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -63,6 +65,7 @@ src_install() {
 		command_background="true"
 		command_user="ollama:ollama"
 		
+		# Resource scaling optimization rules for your Precision 3470 laptop hardware
 		export OLLAMA_MODELS="/var/lib/ollama/.ollama/models"
 		export OLLAMA_CONTEXT_LENGTH=32768
 		export OLLAMA_NUM_PARALLEL=1
@@ -73,7 +76,7 @@ src_install() {
 	EOF
 	newinitd "${T}/ollama.init" ollama
 
-	# 5. Create Systemd unit configuration
+	# 5. Deploy standard Systemd Unit configuration profiles
 	cat <<-'EOF' > "${T}/ollama.service"
 		[Unit]
 		Description=Ollama Service
