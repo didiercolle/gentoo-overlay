@@ -34,18 +34,22 @@ src_unpack() {
 }
 
 src_compile() {
-	# Force Ollama to run fully local on CGO
+	# Schakel CGO in voor de lokale C++ bindings
 	export CGO_ENABLED=1
 	
-	# CRITICAL FIX: Force the generator script to ONLY target the CPU back-end.
-	# This bypasses the network-dependent detection steps for CUDA, ROCm, and OneAPI assets.
-	export OLLAMA_CUSTOM_CPU_ONLY=1
-	export OLLAMA_SKIP_CPU_GENERATE=0
+	# HIER ZIT DE CRUCIALE FIX voor de sandbox:
+	# We blokkeren expliciet elke poging om GPU backends te zoeken of bouwen.
+	export OLLAMA_SKIP_CUDA_GENERATE=1
+	export OLLAMA_SKIP_ROCM_GENERATE=1
+	export OLLAMA_SKIP_ONEAPI_GENERATE=1
 	
-	# Instruct go generate to use the local vendor bundle cache rather than hitting the WAN
+	# Zorg dat hij puur de CPU-bibliotheek bouwt zonder extra netwerk-downloads
+	export OLLAMA_CPU_TARGET="static"
+
+	# Voer de code-generator uit met de lokale vendor bibliotheken
 	go generate -mod=vendor ./... || die "go generate failed to build llama.cpp backends"
 	
-	# Final native build
+	# Bouw de uiteindelijke Gentoo binary
 	ego build -mod=vendor -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
