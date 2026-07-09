@@ -65,8 +65,47 @@ src_compile() {
 }
 
 src_install() {
+	# 1. Install the compiled binary target
 	dobin bin/ollama
 
+	# 2. Setup persistent system directory
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
+
+	# 3. Explicitly create and install the OpenRC init script
+	cat <<-'EOF' > "${T}/ollama.init"
+		#!/sbin/openrc-run
+		description="Ollama Local LLM Service"
+		pidfile="/run/ollama.pid"
+		command="/usr/bin/ollama"
+		command_args="serve"
+		command_background="true"
+		command_user="ollama:ollama"
+		export OLLAMA_MODELS="/var/lib/ollama/.ollama/models"
+		export OLLAMA_CONTEXT_LENGTH=32768
+		export OLLAMA_NUM_PARALLEL=1
+		depend() { need net; }
+	EOF
+	newinitd "${T}/ollama.init" ollama
+
+	# 4. Explicitly create and install the Systemd service descriptor
+	cat <<-'EOF' > "${T}/ollama.service"
+		[Unit]
+		Description=Ollama Service
+		After=network-online.target
+
+		[Service]
+		ExecStart=/usr/bin/ollama serve
+		User=ollama
+		Group=ollama
+		Restart=always
+		RestartSec=3
+		Environment="OLLAMA_MODELS=/var/lib/ollama/.ollama/models"
+		Environment="OLLAMA_CONTEXT_LENGTH=32768"
+		Environment="OLLAMA_NUM_PARALLEL=1"
+
+		[Install]
+		WantedBy=default.target
+	EOF
+	systemd_dounit "${T}/ollama.service"
 }
