@@ -16,7 +16,11 @@ KEYWORDS="~amd64"
 IUSE="systemd"
 
 # Go compiler required for building from source
-BDEPEND=">=dev-lang/go-1.22"
+BDEPEND="
+	>=dev-lang/go-1.22
+	dev-build/cmake
+	dev-build/ninja
+"
 RDEPEND="
 	acct-group/ollama
 	acct-user/ollama
@@ -30,14 +34,19 @@ src_unpack() {
 }
 
 src_compile() {
-	# Force Ollama to compile the underlying CGO code using CPU execution targets
+	# Force Ollama to run fully local on CGO
 	export CGO_ENABLED=1
 	
-	# Generate embedded llama.cpp logic 
-	go generate ./... || die "go generate failed to build llama.cpp backends"
+	# CRITICAL FIX: Force the generator script to ONLY target the CPU back-end.
+	# This bypasses the network-dependent detection steps for CUDA, ROCm, and OneAPI assets.
+	export OLLAMA_CUSTOM_CPU_ONLY=1
+	export OLLAMA_SKIP_CPU_GENERATE=0
 	
-	# Standard Gentoo Go compilation syntax
-	ego build -o bin/ollama . || die "Failed to build ollama binary"
+	# Instruct go generate to use the local vendor bundle cache rather than hitting the WAN
+	go generate -mod=vendor ./... || die "go generate failed to build llama.cpp backends"
+	
+	# Final native build
+	ego build -mod=vendor -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
 src_install() {
