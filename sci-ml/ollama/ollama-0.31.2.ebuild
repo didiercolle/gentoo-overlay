@@ -54,31 +54,45 @@ src_compile() {
 }
 
 src_install() {
-	# 1. Install the main ollama client executable wrapper
+	# 1. Install primary binary wrapper
 	dobin bin/ollama
 
-	# 2. CRITICAL FIX: Locate and install the llama-server libraries built by CMake
-	# Go generate places them in build/lib/ollama/ or dist/
+	# 2. FIXED PATH DETECTION: Safely locate and grab the CMake compiled llama-server target
 	exeinto /usr/lib/ollama
-	if [[ -d "build/lib/ollama" ]]; then
-		doexe build/lib/ollama/*
-	elif [[ -d "dist/linux-amd64/lib/ollama" ]]; then
-		doexe dist/linux-amd64/lib/ollama/*
-	else
-		# Fallback: find it inside the working folder if path structure varies
-		local server_bin=$(find . -name "llama-server" -type f | head -n 1)
-		if [[ -n "${server_bin}" ]]; then
-			doexe "${server_bin}"
+	
+	local found_server=""
+	# Search likely internal output targets compiled by go generate scripts
+	local search_paths=(
+		"build/lib/ollama/llama-server"
+		"dist/linux-amd64/lib/ollama/llama-server"
+		"llama/server/llama-server"
+		"llm/build/linux/amd64/lib/ollama/llama-server"
+	)
+
+	local path
+	for path in "${search_paths[@]}"; do
+		if [[ -f "${path}" ]]; then
+			doexe "${path}"
+			found_server="true"
+			break
+		fi
+	done
+
+	# Absolute deep filesystem discovery fallback if path mappings vary
+	if [[ -z "${found_server}" ]]; then
+		local fallback_bin=$(find "${S}" -name "llama-server" -type f -executable | head -n 1)
+		if [[ -n "${fallback_bin}" ]]; then
+			doexe "${fallback_bin}"
 		else
-			die "llama-server binary could not be located inside the build tree"
+			die "llama-server binary could not be found anywhere inside the build workspace"
 		fi
 	fi
 
-	# 3. Setup persistent system model storage boundaries
+	# 3. Secure data boundary layouts
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. Deploy OpenRC Init Controls
+	# 4. OpenRC Daemon init profiles
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -94,7 +108,7 @@ src_install() {
 	EOF
 	newinitd "${T}/ollama.init" ollama
 
-	# 5. Deploy Systemd Unit Profiles
+	# 5. Systemd Core configurations
 	cat <<-'EOF' > "${T}/ollama.service"
 		[Unit]
 		Description=Ollama Service
