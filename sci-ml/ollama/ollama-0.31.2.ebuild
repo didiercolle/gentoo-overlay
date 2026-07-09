@@ -54,45 +54,34 @@ src_compile() {
 }
 
 src_install() {
-	# 1. Install primary binary wrapper
+	# 1. Install the primary client wrapper binary
 	dobin bin/ollama
 
-	# 2. FIXED PATH DETECTION: Safely locate and grab the CMake compiled llama-server target
+	# 2. HARDENED INSTALLATION MATCHING THE CPU PRESET TARGETS:
+	# Ollama's build system creates specific preset sub-folders inside 'build/'
 	exeinto /usr/lib/ollama
 	
-	local found_server=""
-	# Search likely internal output targets compiled by go generate scripts
-	local search_paths=(
-		"build/lib/ollama/llama-server"
-		"dist/linux-amd64/lib/ollama/llama-server"
-		"llama/server/llama-server"
-		"llm/build/linux/amd64/lib/ollama/llama-server"
-	)
-
-	local path
-	for path in "${search_paths[@]}"; do
-		if [[ -f "${path}" ]]; then
-			doexe "${path}"
-			found_server="true"
-			break
-		fi
-	done
-
-	# Absolute deep filesystem discovery fallback if path mappings vary
-	if [[ -z "${found_server}" ]]; then
-		local fallback_bin=$(find "${S}" -name "llama-server" -type f -executable | head -n 1)
+	if [[ -f "build/llama-server-cpu/bin/llama-server" ]]; then
+		doexe "build/llama-server-cpu/bin/llama-server"
+	elif [[ -f "build/llama-server-cpu/llama-server" ]]; then
+		doexe "build/llama-server-cpu/llama-server"
+	elif [[ -d "lib/ollama" && -f "lib/ollama/llama-server" ]]; then
+		doexe lib/ollama/*
+	else
+		# Absolute fallback: unconstrained recursive search for matching targets
+		local fallback_bin=$(find "${WORKDIR}" -name "llama-server" -type f -executable | head -n 1)
 		if [[ -n "${fallback_bin}" ]]; then
 			doexe "${fallback_bin}"
 		else
-			die "llama-server binary could not be found anywhere inside the build workspace"
+			die "llama-server binary could not be found anywhere inside the work directory tree"
 		fi
 	fi
 
-	# 3. Secure data boundary layouts
+	# 3. Setup persistent system model storage directory boundaries
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. OpenRC Daemon init profiles
+	# 4. Deploy OpenRC Daemon initialization profiles
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -108,7 +97,7 @@ src_install() {
 	EOF
 	newinitd "${T}/ollama.init" ollama
 
-	# 5. Systemd Core configurations
+	# 5. Deploy Systemd Unit Profiles
 	cat <<-'EOF' > "${T}/ollama.service"
 		[Unit]
 		Description=Ollama Service
