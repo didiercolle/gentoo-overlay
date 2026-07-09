@@ -31,6 +31,13 @@ S="${WORKDIR}/${P}"
 src_unpack() {
 	# Unpack the main source archive and the dependencies archive
 	default
+
+	# 2. CRITICAL FIX: Move the extracted vendor folder inside the main project directory
+	# ${S} points to ${WORKDIR}/${P} (which is /var/tmp/.../work/ollama-0.31.2)
+	if [[ -d "${WORKDIR}/vendor" ]]; then
+		mv "${WORKDIR}/vendor" "${S}/" || die "Failed to move vendor directory into source tree"
+	fi
+
 }
 
 src_compile() {
