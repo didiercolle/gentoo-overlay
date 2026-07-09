@@ -7,7 +7,8 @@ DESCRIPTION="Get up and running with large language models locally"
 HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
 
 # Clean Gentoo formatting matching original source release tarballs
-SRC_URI="https://github.com/${PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
+SRC_URI="https://github.com/${PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz
+         https://localhost/${P}-deps.tar.xz"
 
 LICENSE="MIT"
 SLOT="0"
@@ -22,6 +23,11 @@ RDEPEND="
 "
 
 S="${WORKDIR}/${P}"
+
+src_unpack() {
+	# Unpack the main source archive and the dependencies archive
+	default
+}
 
 src_compile() {
 	# Force Ollama to compile the underlying CGO code using CPU execution targets
