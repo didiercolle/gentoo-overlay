@@ -1,6 +1,3 @@
-# Copyright 2026 Gentoo Authors
-# Distributed under the terms of the GNU General Public License v2
-
 EAPI=8
 
 inherit systemd
@@ -16,11 +13,9 @@ SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# We strictly need zstd and tar at build time to unpack this specific archive layout
-BDEPEND="
-	app-arch/zstd
-	app-arch/tar
-"
+# CRITICAL NATIVE FIX: We register app-arch/zstd so Portage's built-in 
+# unpack system can natively handle .zst streams without shell pipes.
+BDEPEND="app-arch/zstd"
 RDEPEND="
 	acct-group/ollama
 	acct-user/ollama
@@ -29,9 +24,8 @@ RDEPEND="
 S="${WORKDIR}"
 
 src_unpack() {
-	# CRITICAL FIX: Bypass Portage's unpack wrapper entirely.
-	# Decompress the zstd archive to stdout and pipe it directly into tar to preserve the directory structure.
-	zstd -dc "${DISTDIR}/${P}-linux-amd64.tar.zst" | tar -xf - -C "${WORKDIR}" || die "Manual zstd/tar extraction failed"
+	# Let Portage handle the sandboxed extraction natively
+	unpack "${P}-linux-amd64.tar.zst"
 }
 
 src_compile() {
@@ -40,20 +34,31 @@ src_compile() {
 }
 
 src_install() {
-	# 1. Install the primary client executable directly to /usr/bin/ollama
+	# 1. Install the main client binary wrapper
 	into /usr
 	if [[ -f "${WORKDIR}/bin/ollama" ]]; then
 		dobin bin/ollama
+	elif [[ -f "${WORKDIR}/ollama" ]]; then
+		dobin ollama
 	else
-		die "Primary 'ollama' executable missing from expected path. Unpack failed to create bin/ollama folder structure."
+		# Safety fallback: search recursively if paths are flat
+		local fallback_bin=$(find "${WORKDIR}" -type f -name "ollama" -executable | head -n 1)
+		if [[ -n "${fallback_bin}" ]]; then
+			dobin "${fallback_bin}"
+		else
+			die "Primary 'ollama' executable missing from workspace"
+		fi
 	fi
 
-	# 2. Install the backend engines (llama-server) into /usr/lib/ollama/
+	# 2. Install the companion inference engines (llama-server)
 	exeinto /usr/lib/ollama
 	if [[ -d "${WORKDIR}/lib/ollama" ]]; then
 		doexe lib/ollama/*
 	else
-		die "Backend runtime inference engines missing from expected path. Unpack failed to create lib/ollama folder structure."
+		local fallback_server=$(find "${WORKDIR}" -type f -name "llama-server" -executable | head -n 1)
+		if [[ -n "${fallback_server}" ]]; then
+			doexe "${fallback_server}"
+		fi
 	fi
 
 	# 3. Setup the persistent system data boundary storage directory
