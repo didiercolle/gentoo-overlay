@@ -1,27 +1,28 @@
 EAPI=8
 
-# Inherit go-module to handle offline dependency sandboxing
+# The go-module eclass handles standard dynamic downloading safely
 inherit go-module systemd
 
 DESCRIPTION="Get up and running with large language models locally"
-HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
+HOMEPAGE="https://ollama.com https://github.com"
 
-# Clean Gentoo formatting matching original source release tarballs
-SRC_URI="https://github.com/${PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz
-         https://localhost/${P}-deps.tar.xz"
+# Pure upstream source archive URL
+SRC_URI="https://github.com/${PN}/${PN}/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
 
 LICENSE="MIT"
 SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# Go compiler required for building from source
+# Build tools required inside the build sandbox
 BDEPEND="
 	>=dev-lang/go-1.22
 	dev-build/cmake
 	dev-build/ninja
 	dev-util/tree-sitter-cli
 "
+
+# Bind against Gentoo's system tree-sitter libraries
 DEPEND="dev-libs/tree-sitter"
 RDEPEND="
 	${DEPEND}
@@ -32,75 +33,33 @@ RDEPEND="
 S="${WORKDIR}/${P}"
 
 src_unpack() {
-	# Unpack the main source archive and the dependencies archive
+	# Standard source decompression
 	default
-
-	# 2. CRITICAL FIX: Move the extracted vendor folder inside the main project directory
-	# ${S} points to ${WORKDIR}/${P} (which is /var/tmp/.../work/ollama-0.31.2)
-	if [[ -d "${WORKDIR}/vendor" ]]; then
-		mv "${WORKDIR}/vendor" "${S}/" || die "Failed to move vendor directory into source tree"
-	fi
-
 }
 
 src_compile() {
 	export CGO_ENABLED=1
 	
-	# Force the compiler to look into standard Gentoo include locations for tree-sitter
+	# Instruct CGO to bind directly against standard include directories
 	export CGO_CFLAGS="${CFLAGS} -I/usr/include"
 	export CGO_LDFLAGS="${LDFLAGS} -ltree-sitter"
 
-	# GPU isolation flags for your Intel UHD hardware
+	# GPU platform execution skips for Intel UHD hardware
 	export OLLAMA_SKIP_CUDA_GENERATE=1
 	export OLLAMA_SKIP_ROCM_GENERATE=1
 	export OLLAMA_SKIP_ONEAPI_GENERATE=1
 	export OLLAMA_CPU_TARGET="static"
 
-	# Execute code generation
-	go generate -mod=vendor ./... || die "go generate failed to build llama.cpp backends"
+	# Let the Go toolchain dynamically generate targets inside Portage's network sandbox
+	go generate ./... || die "go generate failed to build llama.cpp backends"
 	
-	# Compile final binary
-	ego build -mod=vendor -o bin/ollama . || die "Failed to build compiled target binary"
+	# Regular compilation build sequence
+	ego build -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
 src_install() {
-	# Installs our fresh locally compiled binary target
 	dobin bin/ollama
 
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
-
-	# Setup OpenRC script
-	newinitd - "${PN}" <<-'EOF'
-		#!/sbin/openrc-run
-		description="Ollama Local LLM Service"
-		pidfile="/run/ollama.pid"
-		command="/usr/bin/ollama"
-		command_args="serve"
-		command_background="true"
-		command_user="ollama:ollama"
-		export OLLAMA_MODELS="/var/lib/ollama/.ollama/models"
-		export OLLAMA_CONTEXT_LENGTH=32768
-		depend() { need net; }
-	EOF
-
-	# Setup Systemd if flag is active
-	if use systemd; then
-		systemd_newunit - "${PN}.service" <<-'EOF'
-			[Unit]
-			Description=Ollama Service
-			After=network-online.target
-
-			[Service]
-			ExecStart=/usr/bin/ollama serve
-			User=ollama
-			Group=ollama
-			Restart=always
-			Environment="OLLAMA_MODELS=/var/lib/ollama/.ollama/models"
-			Environment="OLLAMA_CONTEXT_LENGTH=32768"
-
-			[Install]
-			WantedBy=default.target
-		EOF
-	fi
 }
