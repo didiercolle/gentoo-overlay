@@ -6,7 +6,7 @@ DESCRIPTION="Get up and running with large language models locally (Binary Relea
 HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
 
 # CORRECTED TARGET SUFFIX: Switched from .tgz to .tar.zst as per upstream distribution formats
-SRC_URI="https://github.com/${PN}/${PN}/releases/download/v${PV}/ollama-linux-amd64.tar.zst -> ${P}-linux-amd64.tar.zst"
+SRC_URI="https://github.com/ollama/ollama/releases/download/v${PV}/ollama-linux-amd64.tar.zst -> ${P}-linux-amd64.tar.zst"
 
 LICENSE="MIT"
 SLOT="0"
