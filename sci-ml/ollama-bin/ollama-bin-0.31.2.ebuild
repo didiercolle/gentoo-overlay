@@ -1,11 +1,14 @@
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
 EAPI=8
 
 inherit systemd
 
 DESCRIPTION="Get up and running with large language models locally (Binary Release)"
-HOMEPAGE="https://ollama.com/ https://github.com/ollama/ollama"
+HOMEPAGE="https://ollama.com https://github.com"
 
-# Target the official static binary release for AMD64 architectures
+# Target the official pre-compiled static release archive
 SRC_URI="https://github.com/ollama/ollama/releases/download/v${PV}/ollama-linux-amd64.tar.zst -> ${P}-linux-amd64.tar.zst"
 
 LICENSE="MIT"
@@ -13,8 +16,11 @@ SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# Required decompression dependency package
-BDEPEND="app-arch/zstd"
+# We strictly need zstd and tar at build time to unpack this specific archive layout
+BDEPEND="
+	app-arch/zstd
+	app-arch/tar
+"
 RDEPEND="
 	acct-group/ollama
 	acct-user/ollama
@@ -23,8 +29,9 @@ RDEPEND="
 S="${WORKDIR}"
 
 src_unpack() {
-	# Extract the zstd compressed archive cleanly into the root of ${WORKDIR}
-	unpack "${P}-linux-amd64.tar.zst"
+	# CRITICAL FIX: Bypass Portage's unpack wrapper entirely.
+	# Decompress the zstd archive to stdout and pipe it directly into tar to preserve the directory structure.
+	zstd -dc "${DISTDIR}/${P}-linux-amd64.tar.zst" | tar -xf - -C "${WORKDIR}" || die "Manual zstd/tar extraction failed"
 }
 
 src_compile() {
@@ -33,29 +40,27 @@ src_compile() {
 }
 
 src_install() {
-	# 1. FIXED EXECUTABLE DEPLOYMENT:
-	# Install the primary binary into /usr/bin/ using the explicit workspace sub-path
-	exeinto /usr/bin
-	if [[ -f "${S}/bin/ollama" ]]; then
-		doexe bin/ollama
+	# 1. Install the primary client executable directly to /usr/bin/ollama
+	into /usr
+	if [[ -f "${WORKDIR}/bin/ollama" ]]; then
+		dobin bin/ollama
 	else
-		die "Primary 'ollama' client executable wrapper missing from extracted 'bin/' path"
+		die "Primary 'ollama' executable missing from expected path. Unpack failed to create bin/ollama folder structure."
 	fi
 
-	# 2. FIXED BACKEND ENGINE DEPLOYMENT:
-	# Copy the companion llama-server engines into /usr/lib/ollama/
+	# 2. Install the backend engines (llama-server) into /usr/lib/ollama/
 	exeinto /usr/lib/ollama
-	if [[ -d "${S}/lib/ollama" ]]; then
+	if [[ -d "${WORKDIR}/lib/ollama" ]]; then
 		doexe lib/ollama/*
 	else
-		die "Backend runtime inference engines missing from extracted 'lib/ollama/' path"
+		die "Backend runtime inference engines missing from expected path. Unpack failed to create lib/ollama folder structure."
 	fi
 
 	# 3. Setup the persistent system data boundary storage directory
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. Deploy clean OpenRC init profiles on the fly
+	# 4. Deploy clean OpenRC init profiles
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -65,7 +70,6 @@ src_install() {
 		command_background="true"
 		command_user="ollama:ollama"
 		
-		# Resource scaling optimization rules for your Precision 3470 laptop hardware
 		export OLLAMA_MODELS="/var/lib/ollama/.ollama/models"
 		export OLLAMA_CONTEXT_LENGTH=32768
 		export OLLAMA_NUM_PARALLEL=1
