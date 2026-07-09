@@ -20,8 +20,11 @@ BDEPEND="
 	>=dev-lang/go-1.22
 	dev-build/cmake
 	dev-build/ninja
+	dev-util/tree-sitter-cli
 "
+DEPEND="dev-libs/tree-sitter"
 RDEPEND="
+	${DEPEND}
 	acct-group/ollama
 	acct-user/ollama
 "
@@ -41,22 +44,22 @@ src_unpack() {
 }
 
 src_compile() {
-	# Schakel CGO in voor de lokale C++ bindings
 	export CGO_ENABLED=1
 	
-	# HIER ZIT DE CRUCIALE FIX voor de sandbox:
-	# We blokkeren expliciet elke poging om GPU backends te zoeken of bouwen.
+	# Force the compiler to look into standard Gentoo include locations for tree-sitter
+	export CGO_CFLAGS="${CFLAGS} -I/usr/include"
+	export CGO_LDFLAGS="${LDFLAGS} -ltree-sitter"
+
+	# GPU isolation flags for your Intel UHD hardware
 	export OLLAMA_SKIP_CUDA_GENERATE=1
 	export OLLAMA_SKIP_ROCM_GENERATE=1
 	export OLLAMA_SKIP_ONEAPI_GENERATE=1
-	
-	# Zorg dat hij puur de CPU-bibliotheek bouwt zonder extra netwerk-downloads
 	export OLLAMA_CPU_TARGET="static"
 
-	# Voer de code-generator uit met de lokale vendor bibliotheken
+	# Execute code generation
 	go generate -mod=vendor ./... || die "go generate failed to build llama.cpp backends"
 	
-	# Bouw de uiteindelijke Gentoo binary
+	# Compile final binary
 	ego build -mod=vendor -o bin/ollama . || die "Failed to build compiled target binary"
 }
 
