@@ -5,7 +5,7 @@ inherit systemd
 DESCRIPTION="Get up and running with large language models locally (Binary Release)"
 HOMEPAGE="https://ollama.com https://github.com"
 
-# Target the official pre-compiled static release archive
+# Point to the official static binary release
 SRC_URI="https://github.com/ollama/ollama/releases/download/v${PV}/ollama-linux-amd64.tar.zst -> ${P}-linux-amd64.tar.zst"
 
 LICENSE="MIT"
@@ -13,9 +13,11 @@ SLOT="0"
 KEYWORDS="~amd64"
 IUSE="systemd"
 
-# CRITICAL NATIVE FIX: We register app-arch/zstd so Portage's built-in 
-# unpack system can natively handle .zst streams without shell pipes.
-BDEPEND="app-arch/zstd"
+# We strictly need app-arch/zstd and app-arch/tar on the host system to run extraction
+BDEPEND="
+	app-arch/zstd
+	app-arch/tar
+"
 RDEPEND="
 	acct-group/ollama
 	acct-user/ollama
@@ -24,48 +26,39 @@ RDEPEND="
 S="${WORKDIR}"
 
 src_unpack() {
-	# Let Portage handle the sandboxed extraction natively
-	unpack "${P}-linux-amd64.tar.zst"
+	# NO MORE PORTAGE UNPACK GHOSTING.
+	# We force decompression using the absolute direct system binary paths 
+	# to extract the archive explicitly into the sandbox work folder.
+	/usr/bin/zstd -dc "${DISTDIR}/${P}-linux-amd64.tar.zst" | /bin/tar -xf - -C "${WORKDIR}" || die "Extraction failed"
 }
 
 src_compile() {
-	# Precompiled binary package; no compiler stages required
+	# Binary package - no compilation steps
 	:
 }
 
 src_install() {
-	# 1. Install the main client binary wrapper
+	# Ensure directory configurations match our real layout
 	into /usr
+	
+	# Install client wrapper binary
 	if [[ -f "${WORKDIR}/bin/ollama" ]]; then
 		dobin bin/ollama
-	elif [[ -f "${WORKDIR}/ollama" ]]; then
-		dobin ollama
 	else
-		# Safety fallback: search recursively if paths are flat
-		local fallback_bin=$(find "${WORKDIR}" -type f -name "ollama" -executable | head -n 1)
-		if [[ -n "${fallback_bin}" ]]; then
-			dobin "${fallback_bin}"
-		else
-			die "Primary 'ollama' executable missing from workspace"
-		fi
+		die "Primary 'ollama' executable missing from workspace extraction target"
 	fi
 
-	# 2. Install the companion inference engines (llama-server)
+	# Install server library packages
 	exeinto /usr/lib/ollama
 	if [[ -d "${WORKDIR}/lib/ollama" ]]; then
 		doexe lib/ollama/*
-	else
-		local fallback_server=$(find "${WORKDIR}" -type f -name "llama-server" -executable | head -n 1)
-		if [[ -n "${fallback_server}" ]]; then
-			doexe "${fallback_server}"
-		fi
 	fi
 
-	# 3. Setup the persistent system data boundary storage directory
+	# Setup persistent data directories
 	diropts -o ollama -g ollama -m 0750
 	keepdir /var/lib/ollama
 
-	# 4. Deploy clean OpenRC init profiles
+	# Deploy OpenRC system initialization configurations
 	cat <<-'EOF' > "${T}/ollama.init"
 		#!/sbin/openrc-run
 		description="Ollama Local LLM Service"
@@ -74,18 +67,14 @@ src_install() {
 		command_args="serve"
 		command_background="true"
 		command_user="ollama:ollama"
-		
 		export OLLAMA_MODELS="/var/lib/ollama/.ollama/models"
 		export OLLAMA_CONTEXT_LENGTH=32768
 		export OLLAMA_NUM_PARALLEL=1
-
-		depend() {
-			need net
-		}
+		depend() { need net; }
 	EOF
 	newinitd "${T}/ollama.init" ollama
 
-	# 5. Deploy standard Systemd Unit configuration profiles
+	# Deploy Systemd system daemon service configurations
 	cat <<-'EOF' > "${T}/ollama.service"
 		[Unit]
 		Description=Ollama Service
@@ -100,7 +89,6 @@ src_install() {
 		Environment="OLLAMA_MODELS=/var/lib/ollama/.ollama/models"
 		Environment="OLLAMA_CONTEXT_LENGTH=32768"
 		Environment="OLLAMA_NUM_PARALLEL=1"
-
 		[Install]
 		WantedBy=default.target
 	EOF
